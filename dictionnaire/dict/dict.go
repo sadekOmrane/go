@@ -2,88 +2,158 @@ package dict
 	
 import (
 	"encoding/json"
-	"fmt"
-	"os"
+	"net/http"
 )
-
-type dict struct {
-	pathFile string
-    m map[string]string
+type Dict struct {
+	Word       string `json:"word"`
+	Definition string `json:"definition"`
 }
 
-
-func New(path string) dict {
-	return dict{pathFile: path,m: make(map[string]string)}
+type Server struct {
+	Status  int    `json:"status"`
+	Message string `json:"message"`
+	Data    []Dict `json:"data"`
 }
 
-func (d dict) List() {
-	for key, value := range d.m {
-		fmt.Println(key, value)
+func New() *Server {
+	s := Server{
+		Data: []Dict{},
 	}
+	return &s
 }
 
-func (d dict) Get(key string) {
-	fmt.Println(d.m[key])
-}
-
-func (d dict) Add(key string, value string) {
-	d.m[key] = value
-}
-
-func (d dict) Remove(key string) {
-	delete(d.m, key)
-}
-
-func (d dict) Update(key string, new_value string) {
-	d.m[key] = new_value
-}
-
-func (d dict) SaveToFile() {
-	// Marshal the slice into JSON format
-	jsonData, err := json.MarshalIndent(d.m, "", "    ")
-	if err != nil {
-		fmt.Println("Error marshaling JSON:", err)
+func (s *Server) PostHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Open a file for writing (create if not exists, truncate if exists)
-	file, err := os.Create(d.pathFile)
-	if err != nil {
-		fmt.Println("Error creating file:", err)
-		return
-	}
-	defer file.Close()
-
-	// Write the JSON data to the file
-	_, err = file.Write(jsonData)
-	if err != nil {
-		fmt.Println("Error writing to file:", err)
+	var dict Dict
+	if err := json.NewDecoder(r.Body).Decode(&dict); err != nil {
+		http.Error(w, "Error reading your dict.", http.StatusBadRequest)
 		return
 	}
 
-	fmt.Println("Data written to dict.json")
+	s.Data = append(s.Data, dict)
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(dict); err != nil {
+		http.Error(w, "Error encoding JSON.", http.StatusInternalServerError)
+		return
+	}
 }
 
-func (d dict) LoadFromFile() {
-	// Open the JSON file for reading
-	file, err := os.Open(d.pathFile)
-	if err != nil {
-		fmt.Println("Error opening file:", err)
-		return
-	}
-	defer file.Close()
-
-	// Read the JSON data from the file into a slice of Person
-	var dicts map[string]string 
-	decoder := json.NewDecoder(file)
-	err = decoder.Decode(&dicts)
-	if err != nil {
-		fmt.Println("Error decoding JSON:", err)
+func (s *Server) GetHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Print the read data
-	for key, value := range dicts {
-		fmt.Printf("%s: %s\n", key, value)
+	word := r.URL.Query().Get("word")
+
+	if word == "" {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(s.Data); err != nil {
+			http.Error(w, "Error encoding JSON.", http.StatusInternalServerError)
+			return
+		}
+		return
+	}
+
+	var foundItem Dict
+	for _, item := range s.Data {
+		if item.Word == word {
+			foundItem = item
+			break
+		}
+	}
+
+	if foundItem.Word == "" {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(foundItem); err != nil {
+		http.Error(w, "Error encoding JSON.", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) UpdateHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	word := r.URL.Query().Get("word")
+	if word == "" {
+		http.Error(w, "Missing 'word' parameter", http.StatusBadRequest)
+		return
+	}
+
+	var updatedDict Dict
+	if err := json.NewDecoder(r.Body).Decode(&updatedDict); err != nil {
+		http.Error(w, "Error decoding JSON", http.StatusBadRequest)
+		return
+	}
+
+	var foundIndex = -1
+	for i, item := range s.Data {
+		if item.Word == word {
+			foundIndex = i
+			break
+		}
+	}
+
+	if foundIndex == -1 {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+
+	s.Data[foundIndex] = updatedDict
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(s.Data[foundIndex]); err != nil {
+		http.Error(w, "Error encoding JSON", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) DeleteHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	word := r.URL.Query().Get("word")
+	if word == "" {
+		http.Error(w, "Missing 'word' parameter", http.StatusBadRequest)
+		return
+	}
+
+	var foundIndex = -1
+	for i, item := range s.Data {
+		if item.Word == word {
+			foundIndex = i
+			break
+		}
+	}
+
+	if foundIndex == -1 {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+
+	s.Data = append(s.Data[:foundIndex], s.Data[foundIndex+1:]...)
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(struct {
+		Message string `json:"message"`
+	}{
+		Message: "Item deleted successfully",
+	}); err != nil {
+		http.Error(w, "Error encoding JSON", http.StatusInternalServerError)
+		return
 	}
 }
